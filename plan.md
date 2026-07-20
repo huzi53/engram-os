@@ -1,4 +1,4 @@
-# DOPE OS — Executable Build Plan v1.3
+# DOPE OS — Executable Build Plan v1.4
 
 > Derived from `Personal_OS_Technical_Specification_v1.0.pdf` (Kimi-generated, 2026-07-20),
 > audited and corrected. This plan supersedes the spec where they conflict — see
@@ -10,7 +10,7 @@
 |---|---|
 | Audience | Single user (Huzi). No multi-tenancy, no third-party auth service. Keep `user_id` column for future-proofing only. |
 | Access | API on a cheap VPS (**Hetzner CX22, Germany, ~€4.35/mo**), reachable over HTTPS. **PWA static files served from Cloudflare Pages** (free, KL edge node) so the dashboard feels instant from Malaysia despite the EU server — capture is offline-first/async, so API latency never blocks it (v1.3). Not localhost. Laptop stays available as a fallback/worker. Oracle's free ARM tier: optional scout/staging box only, never the sole home of data (they halved it without notice in June 2026 and reclaim idle instances). |
-| Phone | Android. Capture via installable PWA with Web Share Target (day one), optional tiny native app later. |
+| Phone | Android. **Capture via Telegram bot (v1.4, primary)** — share sheet → Telegram → bot handles text, links, photos, files, voice, with offline queueing for free. Dashboard quick-note box = the always-available **private path** (direct HTTPS to VPS, no Telegram transit) for sensitive captures. PWA Web Share Target deferred to V3. **Decision checkpoint after MVP (M3):** leaning "Telegram for everything"; revisit with two weeks of real usage data — the ingestion API is channel-agnostic, so this is a habit choice, not an architecture lock. |
 | AI tiers | **No local LLM** (no GPU). Tier 1 = Python heuristics (free). Tier 2 = cloud **fast model** (classification). Tier 3 = cloud **smart model** (enrichment, briefing). **Interactive reasoning (mentor) = existing Claude Pro sub via claude.ai MCP connector — no Claude API.** Hard daily budget cap on the API tiers. |
 | AI provider | **Replaceable by design** (v1.1). All pipeline LLM calls go through the OpenAI-compatible API standard — provider is env config, not code. **Picked by data policy first, price second (v1.2): start OpenAI (no-training default on API traffic)**; swap candidates: Kimi/Moonshot paid, Claude, others passing the data-policy gate. See [AI provider portability](#ai-provider-portability). |
 | Budget | VPS ~€5/mo + domain ~$10/yr + **one-time ~$10 API topup lasting ~a year** + Claude Pro (already paying). Total new spend ≈ **€5/mo + ~$1/mo AI**. |
@@ -28,10 +28,12 @@ running for under $10/month, with zero manual filing.
 One box, one database, one app:
 
 ```
-Android phone ──share──> PWA (Next.js, installed)         Laptop/desktop ──> same PWA
-                              │
-                    Cloudflare Pages (free) — serves PWA static files
-                    from the KL edge node; dashboard feels instant from MY
+Android phone ──share──> Telegram ──> Bot (webhook)──┐   CAPTURE (primary)
+Laptop/desktop ────────> Telegram ──> same bot ──────┤
+Sensitive stuff ──quick-note──> Dashboard ───────────┤   CAPTURE (private path)
+                                                     │
+Dashboard (Next.js) — Cloudflare Pages (free), KL edge:   CONSUMPTION
+search · browse · related · projects · briefing card
                               │ API calls over HTTPS
                               v
                     VPS (Hetzner CX22, Germany — Docker Compose)
@@ -72,6 +74,10 @@ layer"* — is enforced by four hard rules (added v1.1):
    LLM_SMART=<current strong model>            # tier 3: enrichment, briefing
    ```
    No provider name appears anywhere in code — only `FAST` and `SMART` slots.
+   **Fallback chains (v1.4, adopted from ZeroClaw's provider design):** each slot takes an
+   optional `LLM_FAST_FALLBACK`/`LLM_SMART_FALLBACK` (provider+model) — on outage or
+   rate-limit the router retries the fallback instead of stalling the pipeline; fallback
+   providers must also pass the data-policy gate (rule 5).
 2. **Pricing lives in config, not code.** The AI Router's budget cap reads a per-model
    `{input_price, output_price}` table from config, so cost tracking survives any swap.
 3. **Lowest-common-denominator structured output.** JSON requested in the prompt +
@@ -103,12 +109,15 @@ running Postgres + embeddings). Deploy targets (v1.3): **PWA static artifact →
 Pages** (free, KL edge); API/worker images → VPS.
 **Exit test:** you log in from your phone over the internet; a restore from backup works.
 
-### M1 — Capture works (MVP core)
-`POST /api/v1/capture` (text, URL, photo, file) · PWA with Web Share Target registered
-on Android · quick-note box · client retry queue (IndexedDB) so capture never fails ·
-blake2b exact-hash dedup · captures list view (newest first).
-**Exit test:** share a TikTok link, a photo, and a text note from your phone in <10s each;
-all three appear in the dashboard; sharing the same link twice creates one capture.
+### M1 — Capture works (MVP core; re-scoped in v1.4, ~half the original size)
+`POST /api/v1/capture` (text, URL, photo, file, audio) · **Telegram bot** (webhook behind
+Caddy) accepting text, links, photos, files, voice notes, and forwarded messages —
+offline queueing, retry, and compression inherited from Telegram itself · dashboard
+**quick-note box** as the direct private path · blake2b exact-hash dedup · captures list
+view (newest first). ~~PWA share target, IndexedDB retry queue, chunked upload~~ → V3.
+**Exit test:** share a TikTok link, a photo, and a voice note to the bot in <10s each;
+type one sensitive note via dashboard quick-note; all four appear in the captures list;
+sharing the same link twice creates one capture.
 *Honest expectation (v1.2):* TikTok/IG shares arrive as a URL; login walls mean extraction
 gets link + thumbnail + caption (oEmbed/yt-dlp where it works), **not** full video content.
 The capture is still searchable by its metadata — judge M1 against that, not the spec's fantasy.
@@ -142,7 +151,8 @@ everything that belongs to it without ever having filed anything.
 Morning briefing (cron 06:55 **pinned to Asia/Kuala_Lumpur** — the VPS runs on German/UTC
 time; an unpinned cron would deliver your "morning" briefing at ~1pm MY time: pending
 tasks, due dates, yesterday's captures, 1–3
-rediscovered items → one smart-model call → dashboard card + optional push via ntfy) ·
+rediscovered items → one smart-model call → dashboard card + **pushed as a Telegram bot
+message** — ntfy dropped, the bot is already a push channel, v1.4) ·
 rediscovery scoring (spec §8, simplified: project-context + semantic + anniversary) ·
 email ingestion via **Cloudflare Email Routing → Worker → POST /api/v1/capture**
 (`capture@yourdomain` — free, real-time, no mail credentials stored on the VPS;
@@ -161,10 +171,11 @@ and no custom chat UI to build · insights v1 (capture-habit patterns only).
 and get an answer citing the right captures via the connector.
 
 ### M7 — Hardening
-Voice notes (faster-whisper tiny, CPU) if wanted · security pass (rate limit, input
-validation, file-type checks, headers) · restore drill + data export (JSON + files) ·
-performance pass · optional: tiny native Android app (share intent + widget) if the
-PWA share target ever feels limiting.
+Voice-note **transcription** (faster-whisper tiny, CPU — the audio itself already arrives
+via the bot since M1) · security pass (rate limit, input validation, file-type checks,
+headers, bot-token rotation) · restore drill + data export (JSON + files) ·
+performance pass · optional: PWA share target or tiny native Android app if the
+Telegram flow ever feels limiting.
 **Exit test:** full export restores on a clean machine; dashboard loads <2s on phone.
 
 ## Dependencies
@@ -179,6 +190,7 @@ PWA share target ever feels limiting.
 - [ ] **Backblaze B2** bucket for backups — deliberately NOT Cloudflare R2, so backups
       survive even a total Cloudflare account loss (free tier covers it)
 - [ ] Claude Pro sub stays active (mentor mode rides on it via MCP connector, M6)
+- [ ] Telegram bot created via @BotFather (free, 2 minutes; token goes in `.env`)
 
 **Internal blockers:**
 - M1 blocks everything (no data → nothing downstream matters)
@@ -194,7 +206,7 @@ review-sessions, not coding-hours. Assume 2–4 sessions/week. **Low confidence 
 | Milestone | Sessions | Calendar (rough) |
 |---|---|---|
 | M0 Infra | 2–3 | Week 1 |
-| M1 Capture | 3–4 | Weeks 1–2 |
+| M1 Capture | 2–3 (halved in v1.4 — Telegram does the hard parts) | Week 1–2 |
 | M2 Search | 3–4 | Weeks 2–3 |
 | M3 Auto-org | 3–4 | Weeks 3–4 |
 | M4 Linking | 4–5 | Weeks 5–6 |
@@ -210,21 +222,23 @@ accumulated data, which is exactly what M4–M6 need to be tuneable.
 | Risk | Why it's real here | Mitigation |
 |---|---|---|
 | **Abandonment mid-build** (the spec itself jokes about a 50% abandonment pattern) | 24-week horizon, solo | Plan is cut so M1–M3 (~1 month) already delivers daily value; every milestone is independently useful |
-| **Capture friction kills adoption** | If sharing takes >10s or fails offline, you stop using it and the data moat never forms | PWA share target + IndexedDB retry queue in M1, before any AI work |
+| **Capture friction kills adoption** | If sharing takes >10s or fails offline, you stop using it and the data moat never forms | Telegram bot in M1 — offline queueing and retry inherited from a battle-tested app you already use daily |
+| **Telegram privacy** (v1.4) | Bot chats are not E2E-encrypted; every bot capture transits and rests on Telegram's cloud before reaching the VPS | Dashboard quick-note is the permanent private path for finance/health/personal; the split is a per-capture habit, revisited at the M3 checkpoint |
+| **Telegram platform dependency** (v1.4) | Account ban, bot API outage, or policy change breaks primary capture | Ingestion API is channel-agnostic — PWA share target (V3) is a contained add-on, not a rewrite; quick-note keeps working through any Telegram outage |
 | **API cost creep** | No local tier to absorb load; every smart feature is metered | Budget-cap table + router before smart-model features; provider console spend limit as backstop |
 | **Small-VPS resource limits** | OCR + embeddings + Postgres on 4GB RAM | Tesseract (light) not PaddleOCR; batch embedding; resize VPS is a 2-minute operation |
 | **Classification quality disappoints** ("zero manual organization" is the promise) | Cheap fast models on terse captures can misfile | Feedback buttons from M3 day one; misfiles feed prompt tuning and the eval set; escalate low-confidence to the smart model within budget |
 | **Provider swap regresses quality silently** | Prompts are tuned against one model's behavior; a swap (OpenAI → Kimi) can misfile without erroring | Eval set (M3) re-run gates every provider/model change; keep old config until new one passes baseline |
-| **Mentor depends on the Claude Pro sub** | Cancel Pro and mentor mode loses its interface | MCP is an open standard — any MCP client (Claude Code, other apps) can connect to the same server; a self-hosted chat UI on the cheap API is a contained V3 fallback |
+| **Mentor depends on the Claude Pro sub** | Cancel Pro and mentor mode loses its interface | MCP is an open standard — any MCP client can connect to the same server (e.g. Claude Code, or a self-hosted agent runtime like ZeroClaw); a chat UI on the cheap API is a contained V3 fallback |
 | **Data loss** (spec anti-pattern #10: "this is someone's life") | Single VPS is a single point of failure | Encrypted nightly offsite backups from M0, restore actually tested in M0 and re-drilled in M7 |
 | **Cloudflare concentration** (found in v1.3 audit) | One account holds domain, DNS, email capture, and the PWA — a lockout or compromise takes them all down at once | Backups live at Backblaze B2 (different vendor) so data survives total Cloudflare loss; account hardened with 2FA; PWA redeploys from the repo in minutes; domain transfer is slow but data was never at risk |
-| **PWA share-target limitations** | Some apps share weird payloads; PWA can't do accessibility/screenshot monitoring | Accept for MVP; native Android app is a contained M7 add-on, not a rewrite |
 
 ## MVP
 
-**M0–M3:** capture anything from the phone from anywhere, exact-dedup, hybrid
-semantic+keyword search, auto-classification with a budget-capped fast model, browsable by
-category/tag. One VPS, one database, one PWA. This tests the core assumption —
+**M0–M3:** capture anything from the phone from anywhere (Telegram bot + private
+quick-note), exact-dedup, hybrid semantic+keyword search, auto-classification with a
+budget-capped fast model, browsable by category/tag. One VPS, one database, one bot,
+one dashboard. This tests the core assumption —
 *"if capture is frictionless and retrieval is smart, I'll actually use it"* — for
 ~€5 + pocket change in API calls per month.
 
@@ -236,10 +250,11 @@ over your own data, first insights.
 
 ## V3 (rough)
 
-Voice capture, native Android app + home-screen widget, browser extension,
-spaced-repetition study system + quiz generation (spec §9), finance pattern tracking,
-reflection engine (spec §11), notification intelligence, third-party API/webhooks —
-and only if data volume ever demands it: dedicated vector/graph/search stores.
+PWA Web Share Target, native Android app + home-screen widget, browser extension,
+in-bot search commands (/search, /recent), spaced-repetition study system + quiz
+generation (spec §9), finance pattern tracking, reflection engine (spec §11),
+notification intelligence, third-party API/webhooks — and only if data volume ever
+demands it: dedicated vector/graph/search stores.
 
 ---
 
@@ -281,6 +296,16 @@ Flags found in the source spec and how this plan resolves them:
 
 ## Appendix B: Changelog
 
+- **v1.4 (2026-07-20):** Capture re-architected around Telegram after evaluating
+  ZeroClaw (github.com/zeroclaw-labs/zeroclaw — platform rejected as Jarvis-first,
+  three ideas adopted). Telegram bot becomes primary capture channel (M1 halved:
+  offline queue/retry/compression inherited; voice arrives day one; briefing pushes
+  via bot, ntfy dropped). Dashboard quick-note = permanent private path (bot chats
+  are not E2E-encrypted — new privacy + platform-dependency risk rows). PWA share
+  target deferred to V3. Decision checkpoint at M3: "Telegram for everything" vs
+  hybrid is a per-capture habit, not an architecture lock. Also adopted: provider
+  fallback chains (LLM_*_FALLBACK slots, portability rule 1); ZeroClaw named as
+  concrete mentor-fallback MCP client.
 - **v1.3 (2026-07-20):** Hosting decision finalized after market scan (Hetzner +30–40%
   price hikes and Oracle free-tier halving, both mid-2026): Hetzner CX22 Germany
   (~€4.35/mo) as the API host; PWA served from Cloudflare Pages KL edge for free,

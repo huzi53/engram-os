@@ -18,7 +18,7 @@ budget, risks, and the 12 spec flags that were found and fixed).
 
 - **One box:** Hetzner CX22 VPS (Germany) · Docker Compose · Caddy (HTTPS) · FastAPI · worker — PWA served free from Cloudflare Pages (KL edge) so it's fast from Malaysia
 - **One database:** PostgreSQL 16 + pgvector (vectors, full-text search, graph tables, job queue)
-- **Capture:** Android PWA with Web Share Target — no app store, no native build
+- **Capture:** Telegram bot (text, links, photos, files, voice — offline queueing for free) + dashboard quick-note as the direct private path; no app store, no native build
 - **AI tiers:** Python heuristics (free) → cloud fast model (classify) → cloud smart model (enrich/briefing), hard daily budget cap
 - **AI provider:** replaceable by design — any OpenAI-compatible API via `.env` config, restricted to providers that don't train on API traffic (start: OpenAI); swaps gated by a classification eval set
 - **Mentor mode:** Engram exposes a remote MCP server; claude.ai (existing Pro sub) is the mentor interface — zero API cost for reasoning
@@ -30,7 +30,7 @@ budget, risks, and the 12 spec flags that were found and fixed).
 | Milestone | Delivers |
 |---|---|
 | M0 | Infra live: VPS, HTTPS, auth, backups |
-| M1 | Capture from phone, anywhere, <10s |
+| M1 | Capture via Telegram bot from any device, <10s |
 | M2 | Hybrid semantic + keyword search |
 | M3 | Auto-classification (budget-capped) |
 | M4 | Entity graph, related captures, projects |
