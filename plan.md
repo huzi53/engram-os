@@ -1,4 +1,4 @@
-# DOPE OS — Executable Build Plan v1.2
+# DOPE OS — Executable Build Plan v1.3
 
 > Derived from `Personal_OS_Technical_Specification_v1.0.pdf` (Kimi-generated, 2026-07-20),
 > audited and corrected. This plan supersedes the spec where they conflict — see
@@ -9,7 +9,7 @@
 | Decision | Choice |
 |---|---|
 | Audience | Single user (Huzi). No multi-tenancy, no third-party auth service. Keep `user_id` column for future-proofing only. |
-| Access | Hosted on a cheap VPS, reachable from anywhere over HTTPS. Not localhost. Laptop stays available as a fallback/worker but is not the primary host. |
+| Access | API on a cheap VPS (**Hetzner CX22, Germany, ~€4.35/mo**), reachable over HTTPS. **PWA static files served from Cloudflare Pages** (free, KL edge node) so the dashboard feels instant from Malaysia despite the EU server — capture is offline-first/async, so API latency never blocks it (v1.3). Not localhost. Laptop stays available as a fallback/worker. Oracle's free ARM tier: optional scout/staging box only, never the sole home of data (they halved it without notice in June 2026 and reclaim idle instances). |
 | Phone | Android. Capture via installable PWA with Web Share Target (day one), optional tiny native app later. |
 | AI tiers | **No local LLM** (no GPU). Tier 1 = Python heuristics (free). Tier 2 = cloud **fast model** (classification). Tier 3 = cloud **smart model** (enrichment, briefing). **Interactive reasoning (mentor) = existing Claude Pro sub via claude.ai MCP connector — no Claude API.** Hard daily budget cap on the API tiers. |
 | AI provider | **Replaceable by design** (v1.1). All pipeline LLM calls go through the OpenAI-compatible API standard — provider is env config, not code. **Picked by data policy first, price second (v1.2): start OpenAI (no-training default on API traffic)**; swap candidates: Kimi/Moonshot paid, Claude, others passing the data-policy gate. See [AI provider portability](#ai-provider-portability). |
@@ -21,7 +21,7 @@
 
 A personal memory system: capture anything from the phone in under 10 seconds, have it
 automatically organized, linked, and searchable by meaning — accessible from anywhere,
-running for under $20/month, with zero manual filing.
+running for under $10/month, with zero manual filing.
 
 ## Architecture (right-sized)
 
@@ -29,17 +29,20 @@ One box, one database, one app:
 
 ```
 Android phone ──share──> PWA (Next.js, installed)         Laptop/desktop ──> same PWA
-                              │ HTTPS
+                              │
+                    Cloudflare Pages (free) — serves PWA static files
+                    from the KL edge node; dashboard feels instant from MY
+                              │ API calls over HTTPS
                               v
-                    VPS (Hetzner, Docker Compose)
+                    VPS (Hetzner CX22, Germany — Docker Compose)
                     ├─ Caddy          (HTTPS, reverse proxy)
                     ├─ FastAPI        (API + auth: single-user JWT)
                     ├─ Worker         (pipeline: extract → classify → embed → link)
                     ├─ PostgreSQL 16  (+ pgvector) — captures, entities, relations,
                     │                   full-text search, vector search, job queue
-                    └─ /data volume   (raw files) + nightly restic backup → Cloudflare R2/B2
-                              │
-                              v
+                    └─ /data volume   (raw files) + nightly restic backup → Backblaze B2
+                    │                   (deliberately NOT Cloudflare — see risks)
+                    v
                     LLM API — any OpenAI-compatible provider, set via env
                     (LLM_FAST = classify · LLM_SMART = enrich/briefing)
                     CPU embeddings on VPS (multilingual-e5-small, 384-dim —
@@ -66,7 +69,7 @@ layer"* — is enforced by four hard rules (added v1.1):
    LLM_BASE_URL=https://api.openai.com/v1     # or https://api.moonshot.ai/v1 (Kimi), etc.
    LLM_API_KEY=sk-...
    LLM_FAST=<current cheap model>              # tier 2: classification, tagging
-   LLM_SMART=<current strong model>            # tier 3: enrichment, briefing, mentor
+   LLM_SMART=<current strong model>            # tier 3: enrichment, briefing
    ```
    No provider name appears anywhere in code — only `FAST` and `SMART` slots.
 2. **Pricing lives in config, not code.** The AI Router's budget cap reads a per-model
@@ -96,7 +99,8 @@ Domain (buy on Cloudflare Registrar — at-cost pricing, and it unlocks free Ema
 for M5) + Hetzner VPS + Docker Compose (Caddy, FastAPI hello-world, Postgres+pgvector)
 + HTTPS + single-user JWT login + nightly encrypted backup job. PWA/frontend builds run
 in **GitHub Actions**, never on the 4GB VPS (Next.js builds can OOM a box that's also
-running Postgres + embeddings) — only built artifacts get deployed.
+running Postgres + embeddings). Deploy targets (v1.3): **PWA static artifact → Cloudflare
+Pages** (free, KL edge); API/worker images → VPS.
 **Exit test:** you log in from your phone over the internet; a restore from backup works.
 
 ### M1 — Capture works (MVP core)
@@ -135,7 +139,9 @@ on every capture.
 everything that belongs to it without ever having filed anything.
 
 ### M5 — Daily loop: briefing + rediscovery
-Morning briefing (cron 06:55: pending tasks, due dates, yesterday's captures, 1–3
+Morning briefing (cron 06:55 **pinned to Asia/Kuala_Lumpur** — the VPS runs on German/UTC
+time; an unpinned cron would deliver your "morning" briefing at ~1pm MY time: pending
+tasks, due dates, yesterday's captures, 1–3
 rediscovered items → one smart-model call → dashboard card + optional push via ntfy) ·
 rediscovery scoring (spec §8, simplified: project-context + semantic + anniversary) ·
 email ingestion via **Cloudflare Email Routing → Worker → POST /api/v1/capture**
@@ -164,11 +170,14 @@ PWA share target ever feels limiting.
 ## Dependencies
 
 **Before M0 (decisions/purchases — the only things Claude Code can't do for you):**
-- [ ] Hetzner account + VPS (CX22 ~€4.50/mo to start; resize to 8GB later if OCR/whisper need it)
+- [ ] Hetzner account + VPS (CX22 ~€4.35/mo, Germany — CX line is EU-only; resize to 8GB later if OCR/whisper need it)
 - [ ] A domain name (~$10/yr) bought on **Cloudflare Registrar**, pointed at the VPS
-      (also provides free Email Routing for M5 — no Gmail account needed)
+      (also provides free Email Routing for M5 and Pages for the PWA — no Gmail account needed)
+- [ ] **Harden the Cloudflare account** (strong password + 2FA app/hardware key) — it will
+      hold domain, DNS, email routing, and the PWA; see the concentration risk below
 - [ ] OpenAI API key with a **one-time ~$10 topup** and auto-recharge OFF
-- [ ] Cloudflare R2 or Backblaze B2 bucket for backups (free tiers cover this)
+- [ ] **Backblaze B2** bucket for backups — deliberately NOT Cloudflare R2, so backups
+      survive even a total Cloudflare account loss (free tier covers it)
 - [ ] Claude Pro sub stays active (mentor mode rides on it via MCP connector, M6)
 
 **Internal blockers:**
@@ -208,6 +217,7 @@ accumulated data, which is exactly what M4–M6 need to be tuneable.
 | **Provider swap regresses quality silently** | Prompts are tuned against one model's behavior; a swap (OpenAI → Kimi) can misfile without erroring | Eval set (M3) re-run gates every provider/model change; keep old config until new one passes baseline |
 | **Mentor depends on the Claude Pro sub** | Cancel Pro and mentor mode loses its interface | MCP is an open standard — any MCP client (Claude Code, other apps) can connect to the same server; a self-hosted chat UI on the cheap API is a contained V3 fallback |
 | **Data loss** (spec anti-pattern #10: "this is someone's life") | Single VPS is a single point of failure | Encrypted nightly offsite backups from M0, restore actually tested in M0 and re-drilled in M7 |
+| **Cloudflare concentration** (found in v1.3 audit) | One account holds domain, DNS, email capture, and the PWA — a lockout or compromise takes them all down at once | Backups live at Backblaze B2 (different vendor) so data survives total Cloudflare loss; account hardened with 2FA; PWA redeploys from the repo in minutes; domain transfer is slow but data was never at risk |
 | **PWA share-target limitations** | Some apps share weird payloads; PWA can't do accessibility/screenshot monitoring | Accept for MVP; native Android app is a contained M7 add-on, not a rewrite |
 
 ## MVP
@@ -271,6 +281,15 @@ Flags found in the source spec and how this plan resolves them:
 
 ## Appendix B: Changelog
 
+- **v1.3 (2026-07-20):** Hosting decision finalized after market scan (Hetzner +30–40%
+  price hikes and Oracle free-tier halving, both mid-2026): Hetzner CX22 Germany
+  (~€4.35/mo) as the API host; PWA served from Cloudflare Pages KL edge for free,
+  making paid Singapore hosting unnecessary; Oracle free ARM demoted to optional
+  scout box. Full-plan audit fixes: backups moved R2 → Backblaze B2 to break the
+  Cloudflare single-account concentration (new risk entry + account-hardening
+  dependency); briefing cron pinned to Asia/Kuala_Lumpur (German server would fire
+  at ~1pm MY); stale "$20/mo" goal and "€4.50" price corrected; stale "mentor" removed
+  from LLM_SMART env comment.
 - **v1.2 (2026-07-20):** Cost + privacy restructure after user challenge. Mentor mode
   moved off the API entirely — Engram exposes a remote MCP server and claude.ai (existing
   Pro sub) becomes the mentor interface; M6 no longer builds a chat UI. Pipeline provider

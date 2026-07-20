@@ -16,14 +16,14 @@ budget, risks, and the 12 spec flags that were found and fixed).
 
 ## Architecture at a glance
 
-- **One box:** Hetzner VPS · Docker Compose · Caddy (HTTPS) · FastAPI · worker
+- **One box:** Hetzner CX22 VPS (Germany) · Docker Compose · Caddy (HTTPS) · FastAPI · worker — PWA served free from Cloudflare Pages (KL edge) so it's fast from Malaysia
 - **One database:** PostgreSQL 16 + pgvector (vectors, full-text search, graph tables, job queue)
 - **Capture:** Android PWA with Web Share Target — no app store, no native build
 - **AI tiers:** Python heuristics (free) → cloud fast model (classify) → cloud smart model (enrich/briefing), hard daily budget cap
 - **AI provider:** replaceable by design — any OpenAI-compatible API via `.env` config, restricted to providers that don't train on API traffic (start: OpenAI); swaps gated by a classification eval set
 - **Mentor mode:** Engram exposes a remote MCP server; claude.ai (existing Pro sub) is the mentor interface — zero API cost for reasoning
 - **Embeddings:** multilingual-e5-small (Malay + English), 384-dim, CPU
-- **Running cost:** ~€5/mo VPS + ~$10/yr API topup + domain
+- **Running cost:** ~€4.35/mo VPS + ~$10/yr API topup + ~$10/yr domain; backups on Backblaze B2 free tier (kept off Cloudflare on purpose)
 
 ## Roadmap
 
