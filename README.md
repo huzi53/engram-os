@@ -19,7 +19,8 @@ budget, risks, and the 12 spec flags that were found and fixed).
 - **One box:** Hetzner VPS · Docker Compose · Caddy (HTTPS) · FastAPI · worker
 - **One database:** PostgreSQL 16 + pgvector (vectors, full-text search, graph tables, job queue)
 - **Capture:** Android PWA with Web Share Target — no app store, no native build
-- **AI tiers:** Python heuristics (free) → Claude Haiku (classify) → Claude Sonnet (enrich/mentor), hard daily budget cap
+- **AI tiers:** Python heuristics (free) → cloud fast model (classify) → cloud smart model (enrich/mentor), hard daily budget cap
+- **AI provider:** replaceable by design — any OpenAI-compatible API (OpenAI, Kimi/Moonshot, Claude, …) via `.env` config; swaps gated by a classification eval set
 - **Embeddings:** all-MiniLM-L6-v2, 384-dim, CPU
 
 ## Roadmap

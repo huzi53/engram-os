@@ -1,4 +1,4 @@
-# DOPE OS — Executable Build Plan v1.0
+# DOPE OS — Executable Build Plan v1.1
 
 > Derived from `Personal_OS_Technical_Specification_v1.0.pdf` (Kimi-generated, 2026-07-20),
 > audited and corrected. This plan supersedes the spec where they conflict — see
@@ -11,8 +11,9 @@
 | Audience | Single user (Huzi). No multi-tenancy, no third-party auth service. Keep `user_id` column for future-proofing only. |
 | Access | Hosted on a cheap VPS, reachable from anywhere over HTTPS. Not localhost. Laptop stays available as a fallback/worker but is not the primary host. |
 | Phone | Android. Capture via installable PWA with Web Share Target (day one), optional tiny native app later. |
-| AI tiers | **No local LLM** (no GPU). Tier 1 = Python heuristics (free). Tier 2 = Claude Haiku (classification). Tier 3 = Claude Sonnet (enrichment, briefing, mentor). Hard daily budget cap. |
-| Budget | ~$10–20/month total: VPS ~€5–9 + Claude API ~$5–10. |
+| AI tiers | **No local LLM** (no GPU). Tier 1 = Python heuristics (free). Tier 2 = cloud **fast model** (classification). Tier 3 = cloud **smart model** (enrichment, briefing, mentor). Hard daily budget cap. |
+| AI provider | **Replaceable by design** (v1.1). All LLM calls go through the OpenAI-compatible API standard — provider is env config, not code. Start: OpenAI; candidates to swap: Kimi/Moonshot, Claude, DeepSeek, OpenRouter. See [AI provider portability](#ai-provider-portability). |
+| Budget | ~$10–20/month total: VPS ~€5–9 + LLM API ~$5–10. |
 | Build mode | Claude Code writes the code; Huzi directs, reviews, and tests. Pace is set by review bandwidth, not coding time. |
 | Priorities | 1) Capture + search. 2) Auto-organization + linking. Briefing/rediscovery next; mentor/insights later. |
 
@@ -39,8 +40,10 @@ Android phone ──share──> PWA (Next.js, installed)         Laptop/desktop
                     └─ /data volume   (raw files) + nightly restic backup → Cloudflare R2/B2
                               │
                               v
-                    Claude API (Haiku = cheap classify, Sonnet = deep work)
-                    CPU embeddings on VPS (all-MiniLM-L6-v2, 384-dim)
+                    LLM API — any OpenAI-compatible provider, set via env
+                    (LLM_FAST = classify · LLM_SMART = deep work)
+                    CPU embeddings on VPS (all-MiniLM-L6-v2, 384-dim — local,
+                    provider-independent, never needs re-embedding on a swap)
 ```
 
 **What replaced the spec's 6 datastores:** Postgres does vectors (pgvector), full-text
@@ -48,6 +51,34 @@ search (tsvector), graph (`entities` + `capture_relations` tables + recursive CT
 metadata (JSONB), and the job queue (`FOR UPDATE SKIP LOCKED`). Files live on the VPS
 disk. Neo4j, Qdrant, Meilisearch, MinIO, Redis, Celery: all deferred until data volume
 proves the need (likely never for one user).
+
+## AI provider portability
+
+The spec's first principle — *"Data is the primary asset. AI is a replaceable processing
+layer"* — is enforced by four hard rules (added v1.1):
+
+1. **One client, OpenAI-compatible.** All LLM calls use the `openai` Python SDK with a
+   configurable `base_url`. OpenAI is native; Kimi (Moonshot), Anthropic, DeepSeek, and
+   OpenRouter all expose OpenAI-compatible endpoints. Swapping provider = editing `.env`:
+   ```env
+   LLM_BASE_URL=https://api.openai.com/v1     # or https://api.moonshot.ai/v1 (Kimi), etc.
+   LLM_API_KEY=sk-...
+   LLM_FAST=<current cheap model>              # tier 2: classification, tagging
+   LLM_SMART=<current strong model>            # tier 3: enrichment, briefing, mentor
+   ```
+   No provider name appears anywhere in code — only `FAST` and `SMART` slots.
+2. **Pricing lives in config, not code.** The AI Router's budget cap reads a per-model
+   `{input_price, output_price}` table from config, so cost tracking survives any swap.
+3. **Lowest-common-denominator structured output.** JSON requested in the prompt +
+   Pydantic validation + one retry on parse failure. No provider-specific JSON modes or
+   tool-calling formats, so every OpenAI-compatible provider behaves identically.
+4. **Eval set gates every swap.** ~30 real captures with known-correct classifications,
+   stored in the repo (built during M3). After any provider/model change, re-run the eval;
+   accept the swap only if accuracy stays ≥ the current baseline. This catches silent
+   quality regressions that a "it seems to work" check misses.
+
+Embeddings are already portable: they run locally (MiniLM, CPU), so chat-model swaps
+never require re-embedding.
 
 ## Milestones
 
@@ -73,16 +104,17 @@ hybrid search endpoint (pgvector cosine + Postgres FTS, merged) · search UI.
 about sleep") and by keyword, in the top 3 results.
 
 ### M3 — Auto-organization (priority feature)
-Haiku classification per capture (categories, tags, title, priority, content_type,
-deadline, action_required — the spec's Stage-2 prompt, pointed at Haiku) ·
-AI Router with daily budget cap + spend tracking table · category/tag browse UI ·
-thumbs up/down feedback stored on captures.
+Fast-model classification per capture (categories, tags, title, priority, content_type,
+deadline, action_required — the spec's Stage-2 prompt, pointed at the `LLM_FAST` slot) ·
+AI Router with daily budget cap + per-model pricing config + spend tracking table ·
+classification eval set (~30 labeled captures, the swap gate from the portability rules) ·
+category/tag browse UI · thumbs up/down feedback stored on captures.
 **Exit test:** a week of real captures lands >80% correctly categorized with sensible
 titles, at <$0.15/day API spend.
 
 ### M4 — Linking & graph
 `entities` + `capture_entities` + `capture_relations` tables (spec schema, corrected SQL) ·
-entity extraction (from Haiku output + heuristics) · similarity links (cosine > 0.82) ·
+entity extraction (from fast-model output + heuristics) · similarity links (cosine > 0.82) ·
 temporal-proximity + shared-entity + project links · projects CRUD · "Related" panel
 on every capture.
 **Exit test:** open any capture and see genuinely related items; open a project and see
@@ -90,14 +122,14 @@ everything that belongs to it without ever having filed anything.
 
 ### M5 — Daily loop: briefing + rediscovery
 Morning briefing (cron 06:55: pending tasks, due dates, yesterday's captures, 1–3
-rediscovered items → one Sonnet call → dashboard card + optional push via ntfy) ·
+rediscovered items → one smart-model call → dashboard card + optional push via ntfy) ·
 rediscovery scoring (spec §8, simplified: project-context + semantic + anniversary) ·
 email ingestion via IMAP **polling** (dedicated Gmail address, checked every 5 min).
 **Exit test:** for one week, the morning card is worth reading, and a forwarded email
 becomes a searchable capture.
 
 ### M6 — Deep enrichment + mentor v1
-Selective Sonnet enrichment (spec §4.4 trigger rules: high priority / long content /
+Selective smart-model enrichment (spec §4.4 trigger rules: high priority / long content /
 finance / low confidence) · mentor chat endpoint grounded in vector search over your
 own captures · insights v1 (capture-habit patterns only).
 **Exit test:** ask the mentor a question about something you captured a month ago and
@@ -115,13 +147,13 @@ PWA share target ever feels limiting.
 **Before M0 (decisions/purchases — the only things Claude Code can't do for you):**
 - [ ] Hetzner account + VPS (CX22 ~€4.50/mo to start; resize to 8GB later if OCR/whisper need it)
 - [ ] A domain name (~$10/yr) pointed at the VPS
-- [ ] Anthropic API key with a low spend limit set in console
+- [ ] LLM provider API key (starting: OpenAI) with a low spend limit set in the provider console
 - [ ] Cloudflare R2 or Backblaze B2 bucket for backups (free tiers cover this)
 - [ ] A dedicated Gmail address for email-forward capture (needed by M5, cheap to create now)
 
 **Internal blockers:**
 - M1 blocks everything (no data → nothing downstream matters)
-- M3's AI Router (budget cap) must exist before M6 (Sonnet enrichment) to prevent cost surprises
+- M3's AI Router (budget cap) must exist before M6 (smart-model enrichment) to prevent cost surprises
 - Embedding model choice is **locked at M2** (384-dim MiniLM) — changing later means re-embedding everything (cheap at personal scale, but a migration)
 
 ## Estimated time
@@ -150,16 +182,17 @@ accumulated data, which is exactly what M4–M6 need to be tuneable.
 |---|---|---|
 | **Abandonment mid-build** (the spec itself jokes about a 50% abandonment pattern) | 24-week horizon, solo | Plan is cut so M1–M3 (~1 month) already delivers daily value; every milestone is independently useful |
 | **Capture friction kills adoption** | If sharing takes >10s or fails offline, you stop using it and the data moat never forms | PWA share target + IndexedDB retry queue in M1, before any AI work |
-| **API cost creep** | No local tier to absorb load; every smart feature is metered | Budget-cap table + router before Sonnet features; Anthropic console spend limit as backstop |
+| **API cost creep** | No local tier to absorb load; every smart feature is metered | Budget-cap table + router before smart-model features; provider console spend limit as backstop |
 | **Small-VPS resource limits** | OCR + embeddings + Postgres on 4GB RAM | Tesseract (light) not PaddleOCR; batch embedding; resize VPS is a 2-minute operation |
-| **Classification quality disappoints** ("zero manual organization" is the promise) | Haiku on terse captures can misfile | Feedback buttons from M3 day one; misfiles feed prompt tuning; escalate low-confidence to Sonnet within budget |
+| **Classification quality disappoints** ("zero manual organization" is the promise) | Cheap fast models on terse captures can misfile | Feedback buttons from M3 day one; misfiles feed prompt tuning and the eval set; escalate low-confidence to the smart model within budget |
+| **Provider swap regresses quality silently** | Prompts are tuned against one model's behavior; a swap (OpenAI → Kimi) can misfile without erroring | Eval set (M3) re-run gates every provider/model change; keep old config until new one passes baseline |
 | **Data loss** (spec anti-pattern #10: "this is someone's life") | Single VPS is a single point of failure | Encrypted nightly offsite backups from M0, restore actually tested in M0 and re-drilled in M7 |
 | **PWA share-target limitations** | Some apps share weird payloads; PWA can't do accessibility/screenshot monitoring | Accept for MVP; native Android app is a contained M7 add-on, not a rewrite |
 
 ## MVP
 
 **M0–M3:** capture anything from the phone from anywhere, exact-dedup, hybrid
-semantic+keyword search, auto-classification with budget-capped Haiku, browsable by
+semantic+keyword search, auto-classification with a budget-capped fast model, browsable by
 category/tag. One VPS, one database, one PWA. This tests the core assumption —
 *"if capture is frictionless and retrieval is smart, I'll actually use it"* — for
 ~€5 + pocket change in API calls per month.
@@ -194,10 +227,12 @@ Flags found in the source spec and how this plan resolves them:
    tables are the single source of truth; Neo4j dropped.
 5. **"IMAP webhook"** doesn't exist. **Fix:** IMAP polling every 5 min (latency target
    relaxed from <30s to <5min — irrelevant for personal email capture).
-6. **Stale model names** (`claude-sonnet-4`, `gpt-4o`, `gemini-1.5-pro`). **Fix:** current
-   Claude models via one config constant: Haiku for classify, Sonnet for enrich/mentor.
-7. **Local LLM tier assumed GPU** — user has none. **Fix:** tier 2 becomes Claude Haiku;
-   heuristics tier absorbs everything it can for free; hard daily budget cap enforced
+6. **Stale, hardcoded model names** (`claude-sonnet-4`, `gpt-4o`, `gemini-1.5-pro`).
+   **Fix (v1.1):** no model names in code at all — abstract `LLM_FAST`/`LLM_SMART` slots
+   behind an OpenAI-compatible client, provider and models set in `.env`
+   (see [AI provider portability](#ai-provider-portability)).
+7. **Local LLM tier assumed GPU** — user has none. **Fix:** tier 2 becomes the cloud fast
+   model; heuristics tier absorbs everything it can for free; hard daily budget cap enforced
    in the router (spec's throttling ladder kept: 80% → downgrade, 100% → heuristics only).
 8. **Six datastores for one user** contradicts the spec's own anti-pattern #9
    ("don't over-engineer v1"). **Fix:** Postgres + disk + Caddy; queue via
@@ -211,7 +246,15 @@ Flags found in the source spec and how this plan resolves them:
 12. **24-week team-sized roadmap** — **Fix:** re-phased to milestone/review-session
     model above; MVP value lands at ~1 month instead of week 4 of 24.
 
-## Appendix B: Next step
+## Appendix B: Changelog
+
+- **v1.1 (2026-07-20):** AI provider made replaceable — OpenAI-compatible client with
+  `LLM_FAST`/`LLM_SMART` env slots, per-model pricing config, portable JSON output,
+  eval-set swap gate. Starting provider: OpenAI (was: hardcoded Claude); Kimi/Moonshot
+  and Claude remain drop-in candidates.
+- **v1.0 (2026-07-20):** Initial audited plan from Personal_OS_Technical_Specification_v1.0.
+
+## Appendix C: Next step
 
 Per the planning skill: this plan defines *what* and *in which order*. The first build
 session (M0) should start by running the **system-architect** pass to fix the concrete
