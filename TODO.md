@@ -97,3 +97,20 @@ Running checklist for the Engram-OS + HuziOS repo work. Updated as steps complet
 - [ ] Set up the actual Windows Task Scheduler nightly job for `backup.sh` (README's
       "Backups" section has the exact steps) — verified manually today, but not yet
       running on an automated schedule.
+- [x] Committed `plans/001-huzios-port-vs-fresh-build.md` — had been sitting untracked
+      since the original planning session, caught during a git-status sweep.
+
+## M1 — Capture works (full pipeline)
+
+- [x] Planner: wrote `plans/004-m1-capture.md`. Scope: `POST /api/v1/capture`
+      (text/URL/photo/file/audio), Telegram long-polling bot, dashboard quick-note box
+      (first UI in the repo), captures list (newest-first), blake2b exact dedup.
+      Frontend: **yes**. Security pass: **warranted** — new Telegram ingestion path +
+      user file uploads are real trust boundaries (unlike the M0 rework).
+- [ ] Builder: execute `plans/004-m1-capture.md`.
+- [ ] Simplifier: cut over-engineering from the diff.
+- [ ] Reviewer: correctness pass.
+- [ ] Security: scoped review — Telegram allowlist gate, file-upload path traversal,
+      disk-fill caps, token-in-localStorage.
+- [ ] Frontend: polish + browser-check the quick-note box and captures list.
+- [ ] Verifier: final gate, exit-test evidence.
