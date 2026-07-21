@@ -43,3 +43,52 @@ interface (M3.5), Obsidian vault indexed rather than migrated.
 | M7 | Hardening, export, voice, optional native app |
 
 MVP = M0–M3, ~1 month of build sessions.
+
+## M0 — Run it
+
+### Before you start (manual, one-time, outside this repo)
+- Buy a domain (Cloudflare Registrar) and point its DNS A-record at your VPS.
+- Create a Hetzner CX22 VPS (or equivalent) with Docker + Docker Compose installed.
+- Turn on 2FA for your Cloudflare account.
+- Create a Backblaze B2 bucket + application key (kept off Cloudflare on purpose — see plan.md).
+- OpenAI API key: not needed yet, deferred to M3.
+- Telegram bot token: not needed yet, deferred to M1.
+
+### Configure
+```bash
+cp .env.example .env
+```
+Fill in `.env`:
+- `DOMAIN` / `ACME_EMAIL` — your domain and Let's Encrypt contact.
+- `POSTGRES_*` / `DATABASE_URL` — pick a long random Postgres password.
+- `AUTH_USERNAME` — your login username.
+- `AUTH_PASSWORD_HASH` — generate with:
+  ```bash
+  docker run --rm python:3.12-slim sh -c "pip -q install bcrypt && python -c \"import bcrypt;print(bcrypt.hashpw(b'YOUR_PASSWORD',bcrypt.gensalt()).decode())\""
+  ```
+  Wrap the result in single quotes when you paste it into `.env` (`AUTH_PASSWORD_HASH='$2b$12$...'`) — otherwise Docker Compose's env_file interpolation and bash's `source` treat `$2b` etc. as variable references and silently blank them out.
+- `JWT_SECRET` — generate with `openssl rand -hex 32`.
+- `RESTIC_REPOSITORY` / `RESTIC_PASSWORD` / `B2_ACCOUNT_ID` / `B2_ACCOUNT_KEY` — from your B2 bucket + key.
+
+### Run
+```bash
+docker compose up -d
+```
+For local testing without a domain, set `DOMAIN=localhost` in `.env` — Caddy issues an internal cert — or hit the API directly at `http://localhost:8000`.
+
+Check it's alive: `curl https://$DOMAIN/health` (or `curl localhost:8000/health` locally) → `{"status":"ok"}`.
+
+Log in:
+```bash
+curl -X POST https://$DOMAIN/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"<AUTH_USERNAME>","password":"<your password>"}'
+```
+Use the returned `access_token` as `Authorization: Bearer <token>` against `GET /api/v1/me`.
+
+### Backups
+Schedule nightly via host crontab (not a container — laziest option, no extra service):
+```
+0 3 * * *  cd /opt/engram && ./scripts/backup.sh >> /var/log/engram-backup.log 2>&1
+```
+To drill the restore half of the exit test: run `./scripts/backup.sh`, then `./scripts/restore.sh` — it restores the latest snapshot into a scratch DB and prints the `users` row count so you can confirm the data survived.

@@ -58,6 +58,10 @@ MCP server ──Tailscale Funnel (public HTTPS)──> claude.ai custom
 connector (mentor mode runs on the existing Claude Pro sub, $0 API)
 ```
 
+**Dashboard visual reference:** HuziOS's glass-panel dashboard (`app/public/app.css`) is
+inspiration-only for the Next.js dashboard's look — no code carries over, different
+framework (see `plans/001-huzios-port-vs-fresh-build.md`).
+
 **What replaced the spec's 6 datastores:** Postgres does vectors (pgvector), full-text
 search (tsvector), graph (`entities` + `capture_relations` tables + recursive CTEs),
 metadata (JSONB), and the job queue (`FOR UPDATE SKIP LOCKED`). Files live on the VPS
@@ -82,7 +86,9 @@ layer"* — is enforced by four hard rules (added v1.1):
    **Fallback chains (v1.4, adopted from ZeroClaw's provider design):** each slot takes an
    optional `LLM_FAST_FALLBACK`/`LLM_SMART_FALLBACK` (provider+model) — on outage or
    rate-limit the router retries the fallback instead of stalling the pipeline; fallback
-   providers must also pass the data-policy gate (rule 5).
+   providers must also pass the data-policy gate (rule 5). Reference implementation: HuziOS's
+   `chat.js` (lines 148–154) has a working Gemini→NIM 429 reroute — read it at M3 build time
+   for the transparent-fallback UX, don't port the JS (see `plans/001-huzios-port-vs-fresh-build.md`).
 2. **Pricing lives in config, not code.** The AI Router's budget cap reads a per-model
    `{input_price, output_price}` table from config, so cost tracking survives any swap.
 3. **Lowest-common-denominator structured output.** JSON requested in the prompt +
@@ -285,7 +291,8 @@ first insights.
 
 PWA Web Share Target, native Android app + home-screen widget, browser extension,
 in-bot search commands (/search, /recent), spaced-repetition study system + quiz
-generation (spec §9), finance pattern tracking, reflection engine (spec §11),
+generation (spec §9 — HuziOS's `study.js` mastery/drill model is the conceptual seed,
+see `plans/001-huzios-port-vs-fresh-build.md`), finance pattern tracking, reflection engine (spec §11),
 notification intelligence, third-party API/webhooks — and only if data volume ever
 demands it: dedicated vector/graph/search stores.
 
