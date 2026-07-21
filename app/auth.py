@@ -65,7 +65,12 @@ def require_access(authorization: str = Header(default=None)) -> dict:
 @router.post("/api/v1/auth/login")
 def login(body: LoginBody):
     user = get_user_by_username(body.username)
-    if user is None or not bcrypt.checkpw(body.password.encode(), user["password_hash"].encode()):
+    try:
+        ok = user is not None and bcrypt.checkpw(body.password.encode(), user["password_hash"].encode())
+    except ValueError:
+        # malformed AUTH_PASSWORD_HASH placeholder never replaced with a real bcrypt hash
+        ok = False
+    if not ok:
         raise HTTPException(status_code=401, detail="invalid credentials")
     access = encode_token(user["id"], "access", ACCESS_TTL_MIN * 60, username=user["username"])
     refresh = encode_token(user["id"], "refresh", REFRESH_TTL_DAYS * 24 * 3600, username=user["username"])

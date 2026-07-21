@@ -17,7 +17,7 @@ fi
 SCRATCH_DB="engram_restore_check"
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP DATABASE IF EXISTS $SCRATCH_DB;"
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE DATABASE $SCRATCH_DB;"
-docker compose exec -T db psql -U "$POSTGRES_USER" -d "$SCRATCH_DB" < "$DUMP_FILE"
+docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$SCRATCH_DB" < "$DUMP_FILE"
 
 echo "row counts in $SCRATCH_DB:"
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$SCRATCH_DB" -c "SELECT count(*) AS users FROM users;"

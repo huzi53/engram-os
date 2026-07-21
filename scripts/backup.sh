@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f .env ] && set -a && source .env && set +a
 
-DUMP_FILE="$(mktemp -d)/engram-db.dump"
+DUMP_FILE="$(mktemp)"
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > "$DUMP_FILE"
 
 restic backup "$DUMP_FILE"
