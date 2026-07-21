@@ -107,10 +107,74 @@ Running checklist for the Engram-OS + HuziOS repo work. Updated as steps complet
       (first UI in the repo), captures list (newest-first), blake2b exact dedup.
       Frontend: **yes**. Security pass: **warranted** — new Telegram ingestion path +
       user file uploads are real trust boundaries (unlike the M0 rework).
-- [ ] Builder: execute `plans/004-m1-capture.md`.
-- [ ] Simplifier: cut over-engineering from the diff.
-- [ ] Reviewer: correctness pass.
-- [ ] Security: scoped review — Telegram allowlist gate, file-upload path traversal,
-      disk-fill caps, token-in-localStorage.
-- [ ] Frontend: polish + browser-check the quick-note box and captures list.
-- [ ] Verifier: final gate, exit-test evidence.
+- [x] Builder: executed `plans/004-m1-capture.md`, 7/7 steps, no deviations. New:
+      `db/migrations/001_captures.sql`, `app/capture.py`, `app/bot.py`,
+      `app/static/{index.html,app.js}`, `app/test_capture.py`; touched: `main.py`,
+      `requirements.txt`, `docker-compose.yml` (+`bot` service, `./data` mount),
+      `.env(.example)` (+Telegram vars), `.gitignore`, `scripts/backup.sh` (+`/data`
+      backup), README, CI. Also fixed a real stored-XSS in `app.js` (plan's sketch used
+      `innerHTML` on attacker/Telegram-controlled text — switched to `textContent`).
+      **Real runtime evidence** (actual Docker stack, not simulated): migration applied
+      live, all 4 containers up, auth-gated capture endpoint tested (201/401/duplicate
+      detection), file+text captures verified end to end with no orphan files on
+      dedup, `test_capture.py` + `test_auth.py` both pass, actual backup.sh run against
+      the live B2 repo now includes `/data`. Static-only: real Telegram message handling
+      (no bot token yet — expected) and phone-browser UI flow.
+      Left uncommitted per instructions (plan has no commit step).
+- [x] Simplifier: cut 1 line — a redundant eager `os.makedirs` in `main.py`'s startup
+      duplicating `capture.py`'s own idempotent one at write-time. Verified with real
+      before/after curl + docker checks (health, text/file capture, dedup, 401, both
+      test suites) — no behavior change. Rest of the diff already lean, nothing else cut.
+- [x] Reviewer: verdict SHIP. No blocking defects — file storage never uses client
+      filenames (uuid+sanitized ext, never served/executed), both endpoints enforce
+      auth, SQL fully parameterized, dedup hashes correct bytes per kind, chat-id
+      allowlist checked before processing, XSS fix confirmed in place. 4 non-blocking
+      findings, all fixed (orchestrator applied directly, then rebuilt + re-verified):
+      (1) bot could crash-loop on a transient sendMessage network error → wrapped in
+      try/except; (2) file upload read entire body into memory before the size check →
+      bounded the read itself to MAX_BYTES+1; (3) fresh/empty-volume deploy would boot
+      with no captures table (migration was manual-only) → wired
+      db/migrations/001_captures.sql into docker-entrypoint-initdb.d alongside init.sql,
+      ordered to run after it; (4) bot could crash if it starts before the API creates
+      the user row → retry loop instead of immediate crash. One accepted tradeoff, not
+      fixed: re-sending an identical file with a new caption silently drops the new
+      caption (exact-dedup is working as designed). Verified post-fix: both test suites
+      pass, live curl smoke test (capture + list) works, captures table confirmed intact
+      via `\d captures`. Cleaned up all test/smoke DB rows and orphan files afterward —
+      captures table and data/captures/ both back to empty.
+- [x] Security: verdict **FIX FIRST** on one finding, everything else cleared. Real
+      issue: `app/bot.py`'s httpx exception strings embed the full request URL
+      (`https://api.telegram.org/bot<TOKEN>/...`), so every logged `getUpdates`/
+      `getFile`/`sendMessage` failure printed the bot token in plaintext to container
+      logs — most likely to fire during initial setup (placeholder token = guaranteed
+      401 loop). Fixed: added a `scrub()` helper, applied at all 3 print sites; verified
+      by rebuilding and confirming the log now shows `bot***` instead of the real token.
+      Cleared (verified, not assumed): path traversal genuinely blocked (uuid + sanitized
+      ext), uploaded files never served back by Caddy/FastAPI (no MIME-confusion path),
+      Telegram chat-id allowlist fails closed and is unspoofable, both new endpoints
+      correctly `Depends(require_access)`, XSS fix confirmed applied at every render
+      site (not just one), JWT-in-localStorage acceptable for this same-origin
+      single-user app behind Tailscale's real TLS termination, secrets pattern consistent
+      with existing `.env`/`.env.example` handling, `python-multipart` a non-issue.
+- [x] Frontend: polished the minimal UI in place, no scope creep (no framework, no
+      build step, no M2+ features). Added: real error/loading states on login and
+      quick-note save (previously a failed save showed nothing), disabled-button
+      double-submit guard, 44px touch targets for phone use, empty-state message,
+      kind badges on list items. Found+fixed a real gotcha: `app/static/` is baked
+      into the API image at build time (no bind mount), so edits need
+      `docker compose up -d --build api` to take effect — noted for future UI work.
+      Verified in a real browser via Chrome tools: wrong-password flow, empty state,
+      save→list-update without reload, double-submit guard (via code trace). Cleaned
+      up its own test data afterward — captures table back to empty.
+- [x] Verifier: **PASS.** Real end-to-end evidence on the live stack: both test suites
+      pass in-container, live text+file capture round trip with dedup confirmed by
+      actual disk state (orphan file correctly removed, only 1 file ever persisted
+      across 2 identical uploads), newest-first ordering correct, 401 without a bearer
+      token, same result through Caddy on :8080. Token-scrub fix confirmed holding in
+      live logs (`bot***`, never the real value). Migration fix confirmed matching the
+      live `\d captures` schema exactly. Cleaned up after itself — captures table and
+      data/captures/ confirmed back to empty (0 before, 0 after). Honest gaps (expected,
+      not blocking): real Telegram message delivery untestable (no bot token exists
+      yet — placeholder in `.env`), phone-over-Tailscale browser session untestable
+      from this environment (API/UI confirmed serving correctly through Caddy though).
+- [x] **M1 code complete and verified — ready to commit.**
